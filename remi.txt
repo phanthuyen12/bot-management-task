@@ -1,0 +1,1 @@
+docker run --rm -it -v %cd%:/app -p 8000:8000 php:8.2-cli php /app/artisan serve --host=0.0.0.0 --port=8000

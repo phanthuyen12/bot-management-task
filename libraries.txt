@@ -1,0 +1,11 @@
+# Thư viện cần cài đặt cho Bot Telegram trong Laravel
+
+1. Nutgram (Framework cho Telegram Bot cực mạnh mẽ và hỗ trợ MVC tốt)
+Lệnh cài đặt:
+composer require laravel-telegram-bot/nutgram
+
+Sau khi cài đặt, chạy lệnh để publish cấu hình:
+php artisan vendor:publish --provider="SergiX44\Nutgram\NutgramServiceProvider"
+
+2. Guzzle (Thường đã có sẵn trong Laravel, dùng để gửi request HTTP nếu cần)
+(Đã có sẵn trong Laravel mặc định)
