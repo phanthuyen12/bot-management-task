@@ -33,11 +33,9 @@ class TelegramBotController extends Controller
         );
 
         $bot->sendMessage(
-            \App\Telegram\Views\MessageTemplates::welcome($user),
-            [
-                'reply_markup' => \App\Telegram\Views\MessageTemplates::homeKeyboard(),
-                'parse_mode' => 'Markdown'
-            ]
+            text: \App\Telegram\Views\MessageTemplates::welcome($user),
+            reply_markup: \App\Telegram\Views\MessageTemplates::homeKeyboard(),
+            parse_mode: 'Markdown'
         );
     }
 
@@ -46,6 +44,10 @@ class TelegramBotController extends Controller
      */
     public function dailyReport(Nutgram $bot)
     {
+        if ($bot->isCallbackQuery()) {
+            $bot->answerCallbackQuery();
+        }
+
         $user = $bot->user();
         $telegramUser = TelegramUser::where('telegram_id', $user->id)->first();
 
@@ -54,9 +56,7 @@ class TelegramBotController extends Controller
             return;
         }
 
-        $bot->sendMessage("Bắt đầu báo cáo ngày! Hãy nhập 3 việc đã làm xong hôm nay:");
-        
-        // Gợi ý: Sử dụng Nutgram Conversation để xử lý luồng câu hỏi
+        \App\Telegram\Conversations\DailyReportConversation::begin($bot);
     }
 
     /**
@@ -64,7 +64,50 @@ class TelegramBotController extends Controller
      */
     public function weeklyReport(Nutgram $bot)
     {
+        if ($bot->isCallbackQuery()) {
+            $bot->answerCallbackQuery();
+        }
+
         $bot->sendMessage("Bắt đầu báo cáo tuần! Hãy nhập KPI tuần của bạn:");
+    }
+
+    /**
+     * Tổng kết tháng.
+     */
+    public function monthlyReport(Nutgram $bot)
+    {
+        if ($bot->isCallbackQuery()) {
+            $bot->answerCallbackQuery();
+        }
+
+        $bot->sendMessage("Bắt đầu báo cáo tháng! Hãy nhập KPI tháng của bạn:");
+    }
+
+    /**
+     * Thông tin cá nhân.
+     */
+    public function info(Nutgram $bot)
+    {
+        if ($bot->isCallbackQuery()) {
+            $bot->answerCallbackQuery();
+        }
+
+        $user = $bot->user();
+        $telegramUser = TelegramUser::where('telegram_id', $user->id)->first();
+
+        if (!$telegramUser) {
+            $bot->sendMessage("Bạn chưa đăng ký. Hãy gửi /start để bắt đầu.");
+            return;
+        }
+
+        $teamName = $telegramUser->team ? $telegramUser->team->name : 'Chưa chọn team';
+        $msg = "👤 Thông tin của bạn:\n";
+        $msg .= "Họ tên: {$telegramUser->first_name} {$telegramUser->last_name}\n";
+        $msg .= "Username: @{$telegramUser->username}\n";
+        $msg .= "Team: {$teamName}\n";
+        $msg .= "Điểm: {$telegramUser->points}\n";
+
+        $bot->sendMessage(text: $msg);
     }
 
     /**
@@ -80,6 +123,6 @@ class TelegramBotController extends Controller
             $msg .= ($index + 1) . ". {$u->first_name} - {$u->points} điểm\n";
         }
         
-        $bot->sendMessage($msg, ['parse_mode' => 'Markdown']);
+        $bot->sendMessage(text: $msg, parse_mode: 'Markdown');
     }
 }

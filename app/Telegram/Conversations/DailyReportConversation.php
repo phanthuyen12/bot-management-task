@@ -25,8 +25,9 @@ class DailyReportConversation extends Conversation
     public function start(Nutgram $bot)
     {
         $bot->sendMessage(
-            MessageTemplates::dailyReportPrompt(),
-            ['reply_markup' => ForceReply::make(selective: true), 'parse_mode' => 'Markdown']
+            text: MessageTemplates::dailyReportPrompt(),
+            reply_markup: ForceReply::make(true, null, true),
+            parse_mode: 'Markdown'
         );
         $this->next('askTasksDone');
     }
@@ -39,8 +40,9 @@ class DailyReportConversation extends Conversation
         $this->tasks_done = $bot->message()->text;
         
         $bot->sendMessage(
-            "Đã ghi nhận công việc. \n\n**Bước 2:** Có việc gì đang vướng không bạn? (Nhập text hoặc bấm /skip nếu không có)",
-            ['reply_markup' => ForceReply::make(selective: true), 'parse_mode' => 'Markdown']
+            text: "Đã ghi nhận công việc. \n\n**Bước 2:** Có việc gì đang vướng không bạn? (Nhập text hoặc bấm /skip nếu không có)",
+            reply_markup: ForceReply::make(true, null, true),
+            parse_mode: 'Markdown'
         );
         $this->next('askStuckTask');
     }
@@ -54,8 +56,8 @@ class DailyReportConversation extends Conversation
         $this->stuck_task = $text === '/skip' ? null : $text;
 
         $bot->sendMessage(
-            "**Bước 3:** Bạn cần ai hỗ trợ không? Hãy chọn từ danh sách dưới đây:",
-            ['reply_markup' => MessageTemplates::supportKeyboard()]
+            text: "**Bước 3:** Bạn cần ai hỗ trợ không? Hãy chọn từ danh sách dưới đây:",
+            reply_markup: MessageTemplates::supportKeyboard()
         );
         $this->next('askSupport');
     }
@@ -74,8 +76,8 @@ class DailyReportConversation extends Conversation
         $bot->answerCallbackQuery();
 
         $bot->sendMessage(
-            "**Bước 4:** Tâm trạng & năng lượng hôm nay của bạn thế nào?",
-            ['reply_markup' => MessageTemplates::moodKeyboard()]
+            text: "**Bước 4:** Tâm trạng & năng lượng hôm nay của bạn thế nào?",
+            reply_markup: MessageTemplates::moodKeyboard()
         );
         $this->next('askMood');
     }
@@ -94,8 +96,8 @@ class DailyReportConversation extends Conversation
         $bot->answerCallbackQuery();
 
         $bot->sendMessage(
-            "**Bước 5:** Viết một dòng cảm xúc tự do (dưới 100 ký tự):",
-            ['reply_markup' => ForceReply::make(selective: true)]
+            text: "**Bước 5:** Viết một dòng cảm xúc tự do (dưới 100 ký tự):",
+            reply_markup: ForceReply::make(true, null, true)
         );
         $this->next('askFeeling');
     }
@@ -113,8 +115,8 @@ class DailyReportConversation extends Conversation
         if ($team && $team->kpis->count() > 0) {
             $firstKpi = $team->kpis->first();
             $bot->sendMessage(
-                MessageTemplates::kpiPrompt($firstKpi->name, $firstKpi->question_text),
-                ['reply_markup' => ForceReply::make(selective: true)]
+                text: MessageTemplates::kpiPrompt($firstKpi->name, $firstKpi->question_text),
+                reply_markup: ForceReply::make(true, null, true)
             );
             
             $bot->setUserData('current_kpi_index', 0);
@@ -131,7 +133,7 @@ class DailyReportConversation extends Conversation
     {
         $user = TelegramUser::where('telegram_id', $bot->user()->id)->first();
         $team = $user->team;
-        $currentIndex = $bot->getUserData('current_kpi_index', 0);
+        $currentIndex = $bot->getUserData('current_kpi_index', null, 0);
         
         $kpis = $team->kpis;
         $currentKpi = $kpis[$currentIndex];
@@ -143,8 +145,8 @@ class DailyReportConversation extends Conversation
         if ($nextIndex < $kpis->count()) {
             $nextKpi = $kpis[$nextIndex];
             $bot->sendMessage(
-                MessageTemplates::kpiPrompt($nextKpi->name, $nextKpi->question_text),
-                ['reply_markup' => ForceReply::make(selective: true)]
+                text: MessageTemplates::kpiPrompt($nextKpi->name, $nextKpi->question_text),
+                reply_markup: ForceReply::make(true, null, true)
             );
             $bot->setUserData('current_kpi_index', $nextIndex);
             $this->next('askKpis');
@@ -169,14 +171,18 @@ class DailyReportConversation extends Conversation
             'kpis' => $this->kpi_answers
         ];
 
-        Report::create([
-            'telegram_user_id' => $user->id,
-            'type' => 'daily',
-            'date' => Carbon::today(),
-            'data' => $data,
-            'points_earned' => 10,
-            'status' => 'submitted'
-        ]);
+        Report::updateOrCreate(
+            [
+                'telegram_user_id' => $user->id,
+                'type' => 'daily',
+                'date' => Carbon::today(),
+            ],
+            [
+                'data' => $data,
+                'points_earned' => 10,
+                'status' => 'submitted',
+            ]
+        );
 
         $bot->sendMessage("🎉 Cảm ơn bạn đã hoàn thành báo cáo ngày! Bé đã ghi nhận.");
         $this->end();

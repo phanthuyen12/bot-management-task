@@ -22,16 +22,25 @@ class MessageTemplates
     {
         return InlineKeyboardMarkup::make()
             ->addRow(
-                InlineKeyboardButton::make('📝 Báo cáo ngày', callback_data: 'menu_daily'),
-                InlineKeyboardButton::make('📊 Báo cáo tuần', callback_data: 'menu_weekly')
+                InlineKeyboardButton::make('👥 Đăng ký team', callback_data: 'menu_register_team'),
+                InlineKeyboardButton::make('📝 Báo cáo ngày', callback_data: 'menu_daily')
             )
             ->addRow(
-                InlineKeyboardButton::make('📅 Báo cáo tháng', callback_data: 'menu_monthly'),
-                InlineKeyboardButton::make('🏆 Bảng xếp hạng', callback_data: 'menu_leaderboard')
+                InlineKeyboardButton::make('📊 Báo cáo tuần', callback_data: 'menu_weekly'),
+                InlineKeyboardButton::make('📅 Báo cáo tháng', callback_data: 'menu_monthly')
             )
             ->addRow(
+                InlineKeyboardButton::make('🏆 Bảng xếp hạng', callback_data: 'menu_leaderboard'),
                 InlineKeyboardButton::make('ℹ️ Thông tin cá nhân', callback_data: 'menu_info')
             );
+    }
+
+    /**
+     * Tin nhắn chọn team đăng ký
+     */
+    public static function teamRegistrationPrompt(): string
+    {
+        return "👥 **ĐĂNG KÝ TEAM** 👥\n\nVui lòng chọn team bạn muốn tham gia.";
     }
 
     /**
@@ -78,6 +87,16 @@ class MessageTemplates
     public static function kpiPrompt(string $kpiName, string $question): string
     {
         return "📊 **Chỉ số KPI: {$kpiName}**\n\n{$question}";
+    }
+
+    public static function weeklyReportPrompt(): string
+    {
+        return "📅 **BÁO CÁO TUẦN** 📅\n\nHãy tóm tắt nhanh những việc bạn đã hoàn thành trong tuần này.";
+    }
+
+    public static function monthlyReportPrompt(): string
+    {
+        return "🗓️ **BÁO CÁO THÁNG** 🗓️\n\nHãy chia sẻ những điểm nổi bật của bạn trong tháng này.";
     }
 
     /**
