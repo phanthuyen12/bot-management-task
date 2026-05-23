@@ -1,0 +1,6 @@
+# Docker artifacts - ignore local files
+backups/
+ssl/
+.env.local
+logs/
+*.log

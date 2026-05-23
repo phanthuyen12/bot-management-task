@@ -7,10 +7,12 @@ return [
     // if the webhook mode must validate the incoming IP range is from a telegram server
     'safe_mode' => env('APP_ENV', 'local') === 'production',
 
-    // Extra or specific configurations
+    // Extra or specific configurations (Nutgram Configuration)
     'config' => [
-        'enable_http2' => false,
-        'timeout' => 30,
+        'enable_http2' => env('NUTGRAM_HTTP2', true),
+        'timeout' => (int) env('NUTGRAM_TIMEOUT', 15),
+        // Conversation state — dùng CACHE_STORE=redis để đọc/ghi nhanh
+        'conversation_ttl' => (int) env('NUTGRAM_CONVERSATION_TTL', 7200),
     ],
 
     // Set if the service provider should automatically load

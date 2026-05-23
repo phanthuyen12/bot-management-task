@@ -2,22 +2,17 @@
 
 namespace App\Telegram\Views;
 
+use App\Models\TelegramUser;
 use SergiX44\Nutgram\Telegram\Types\Keyboard\InlineKeyboardMarkup;
 use SergiX44\Nutgram\Telegram\Types\Keyboard\InlineKeyboardButton;
 
 class MessageTemplates
 {
-    /**
-     * Tin nhắn chào mừng và Menu chính (Giao diện Home)
-     */
     public static function welcome($user): string
     {
-        return "Chào mừng **{$user->first_name}** đến với BiBi! 🤖\n\nBé sẽ giúp bạn thực hiện các báo cáo và theo dõi KPI. Hãy chọn một chức năng dưới đây:";
+        return "Chào mừng {$user->first_name} đến với BiBi! 🤖\n\nBé sẽ giúp bạn thực hiện các báo cáo và theo dõi KPI. Hãy chọn một chức năng dưới đây:";
     }
 
-    /**
-     * Giao diện Home với các nút bấm
-     */
     public static function homeKeyboard(): InlineKeyboardMarkup
     {
         return InlineKeyboardMarkup::make()
@@ -30,30 +25,39 @@ class MessageTemplates
                 InlineKeyboardButton::make('📅 Báo cáo tháng', callback_data: 'menu_monthly')
             )
             ->addRow(
-                InlineKeyboardButton::make('🏆 Bảng xếp hạng', callback_data: 'menu_leaderboard'),
+                InlineKeyboardButton::make('📋 Xem báo cáo', callback_data: 'menu_view_reports'),
+                InlineKeyboardButton::make('🏆 Bảng xếp hạng', callback_data: 'menu_leaderboard')
+            )
+            ->addRow(
                 InlineKeyboardButton::make('ℹ️ Thông tin cá nhân', callback_data: 'menu_info')
             );
     }
 
-    /**
-     * Tin nhắn chọn team đăng ký
-     */
+    public static function reportTypesKeyboard(): InlineKeyboardMarkup
+    {
+        return InlineKeyboardMarkup::make()
+            ->addRow(
+                InlineKeyboardButton::make('📝 Ngày', callback_data: 'reports_type_daily'),
+                InlineKeyboardButton::make('📊 Tuần', callback_data: 'reports_type_weekly'),
+            )
+            ->addRow(
+                InlineKeyboardButton::make('📅 Tháng', callback_data: 'reports_type_monthly'),
+            )
+            ->addRow(
+                InlineKeyboardButton::make('🏠 Menu chính', callback_data: 'menu_home'),
+            );
+    }
+
     public static function teamRegistrationPrompt(): string
     {
-        return "👥 **ĐĂNG KÝ TEAM** 👥\n\nVui lòng chọn team bạn muốn tham gia.";
+        return "👥 ĐĂNG KÝ TEAM\n\nVui lòng chọn team bạn muốn tham gia.";
     }
 
-    /**
-     * Tin nhắn bắt đầu báo cáo ngày
-     */
     public static function dailyReportPrompt(): string
     {
-        return "📝 **BÁO CÁO NGÀY** 📝\n\n**Bước 1:** Hãy nhập 3 việc bạn đã hoàn thành hôm nay (cách nhau bằng dấu xuống dòng).";
+        return "📝 BÁO CÁO NGÀY\n\nBước 1: Hãy nhập 3 việc bạn đã hoàn thành hôm nay (cách nhau bằng dấu xuống dòng).";
     }
 
-    /**
-     * Keyboard chọn tâm trạng (1-5 sao)
-     */
     public static function moodKeyboard(): InlineKeyboardMarkup
     {
         return InlineKeyboardMarkup::make()
@@ -66,56 +70,51 @@ class MessageTemplates
             );
     }
 
-    /**
-     * Keyboard chọn người hỗ trợ (mẫu)
-     */
-    public static function supportKeyboard(): InlineKeyboardMarkup
+    public static function supportKeyboard(?TelegramUser $leader = null, array $peers = []): InlineKeyboardMarkup
     {
-        return InlineKeyboardMarkup::make()
-            ->addRow(
-                InlineKeyboardButton::make('Team Lead', callback_data: 'support_lead'),
-                InlineKeyboardButton::make('Đồng đội', callback_data: 'support_peer')
-            )
-            ->addRow(
-                InlineKeyboardButton::make('Không cần hỗ trợ', callback_data: 'support_none')
-            );
+        $keyboard = InlineKeyboardMarkup::make();
+
+        if ($leader !== null) {
+            self::addSupportUserRow($keyboard, $leader, 'Team Lead');
+        }
+
+        foreach ($peers as $peer) {
+            self::addSupportUserRow($keyboard, $peer, 'Đồng đội');
+        }
+
+        $keyboard->addRow(
+            InlineKeyboardButton::make('Không cần hỗ trợ', callback_data: 'support_none')
+        );
+
+        return $keyboard;
     }
 
-    /**
-     * Tin nhắn hỏi KPI
-     */
     public static function kpiPrompt(string $kpiName, string $question): string
     {
-        return "📊 **Chỉ số KPI: {$kpiName}**\n\n{$question}";
+        return "📊 KPI: {$kpiName}\n\n{$question}";
     }
 
     public static function weeklyReportPrompt(): string
     {
-        return "📅 **BÁO CÁO TUẦN** 📅\n\nHãy tóm tắt nhanh những việc bạn đã hoàn thành trong tuần này.";
+        return "📊 BÁO CÁO TUẦN\n\nBước 1: Tóm tắt những việc bạn đã hoàn thành trong tuần này.";
     }
 
     public static function monthlyReportPrompt(): string
     {
-        return "🗓️ **BÁO CÁO THÁNG** 🗓️\n\nHãy chia sẻ những điểm nổi bật của bạn trong tháng này.";
+        return "📅 BÁO CÁO THÁNG\n\nBước 1: Điểm nổi bật nhất của bạn trong tháng này.";
     }
 
-    /**
-     * Bảng xếp hạng
-     */
     public static function leaderboard($users): string
     {
-        $msg = "🏆 **BẢNG XẾP HẠNG** 🏆\n\n";
+        $msg = "🏆 BẢNG XẾP HẠNG\n\n";
         foreach ($users as $index => $u) {
             $medal = $index == 0 ? '🥇' : ($index == 1 ? '🥈' : ($index == 2 ? '🥉' : '👤'));
-            $msg .= "{$medal} **{$u->first_name}**\n";
+            $msg .= "{$medal} {$u->first_name}\n";
             $msg .= "└ 💰 Điểm: {$u->points} | 🔥 Streak: {$u->streak_count} ngày\n\n";
         }
         return $msg;
     }
 
-    /**
-     * Tin nhắn nhắc nhở
-     */
     public static function reminder($user, $type): string
     {
         if ($type === '21:00') {
@@ -125,5 +124,30 @@ class MessageTemplates
             return "15 phút nữa thôi đó {$user->first_name}, streak {$user->streak_count} ngày của bạn đang đẹp lắm, đừng bỏ giữa chừng nha 🔥";
         }
         return "Hôm nay {$user->first_name} vắng mặt trong sổ nhật ký rồi 😔 — mai gặp lại nha, bé vẫn đợi bạn.";
+    }
+
+    protected static function truncateLabel(string $label, int $limit = 40): string
+    {
+        return mb_strlen($label) > $limit
+            ? mb_substr($label, 0, $limit - 1) . '…'
+            : $label;
+    }
+
+    protected static function addSupportUserRow(InlineKeyboardMarkup $keyboard, TelegramUser $user, string $prefix): void
+    {
+        $label = $prefix . ': ' . self::truncateLabel($user->displayName(), 28);
+
+        if (!empty($user->username)) {
+            $keyboard->addRow(
+                InlineKeyboardButton::make($label, url: 'https://t.me/' . ltrim($user->username, '@')),
+                InlineKeyboardButton::make('Xong', callback_data: 'support_user_' . $user->id)
+            );
+
+            return;
+        }
+
+        $keyboard->addRow(
+            InlineKeyboardButton::make($label, callback_data: 'support_user_' . $user->id)
+        );
     }
 }

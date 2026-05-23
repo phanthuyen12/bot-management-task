@@ -5,25 +5,33 @@ namespace App\Http\Controllers;
 use SergiX44\Nutgram\Nutgram;
 use App\Models\TelegramUser;
 use App\Services\ReportService;
-use App\Models\Team;
+use App\Telegram\ConversationStarter;
+use App\Telegram\Conversations\DailyReportConversation;
+use App\Telegram\Conversations\MonthlyReportConversation;
+use App\Telegram\Conversations\ViewReportsConversation;
+use App\Telegram\Conversations\WeeklyReportConversation;
+use App\Telegram\TelegramResponse;
+use App\Telegram\Views\MessageTemplates;
 
 class TelegramBotController extends Controller
 {
-    protected $reportService;
-
-    public function __construct(ReportService $reportService)
+    public function __construct(protected ReportService $reportService)
     {
-        $this->reportService = $reportService;
     }
 
-    /**
-     * Khởi động bot (Command /start).
-     */
-    public function start(Nutgram $bot)
+    public function start(Nutgram $bot): void
     {
+        TelegramResponse::answerCallback($bot);
+
+        $userId = $bot->userId();
+        $chatId = $bot->chatId();
+        if ($userId !== null && $chatId !== null) {
+            $bot->endConversation($userId, $chatId);
+        }
+
         $user = $bot->user();
 
-        $telegramUser = TelegramUser::firstOrCreate(
+        TelegramUser::firstOrCreate(
             ['telegram_id' => $user->id],
             [
                 'username' => $user->username,
@@ -33,96 +41,136 @@ class TelegramBotController extends Controller
         );
 
         $bot->sendMessage(
-            text: \App\Telegram\Views\MessageTemplates::welcome($user),
-            reply_markup: \App\Telegram\Views\MessageTemplates::homeKeyboard(),
-            parse_mode: 'Markdown'
+            text: MessageTemplates::welcome($user),
+            reply_markup: MessageTemplates::homeKeyboard(),
         );
     }
 
-    /**
-     * Báo cáo ngày (/baocaongay).
-     */
-    public function dailyReport(Nutgram $bot)
+    public function dailyReport(Nutgram $bot): void
     {
-        if ($bot->isCallbackQuery()) {
-            $bot->answerCallbackQuery();
-        }
+        TelegramResponse::answerCallback($bot);
 
-        $user = $bot->user();
-        $telegramUser = TelegramUser::where('telegram_id', $user->id)->first();
-
-        if (!$telegramUser || !$telegramUser->team_id) {
-            $bot->sendMessage("Bạn chưa được phân vào team nào. Vui lòng liên hệ admin.");
+        if (!$this->requireTeamMember($bot)) {
             return;
         }
 
-        \App\Telegram\Conversations\DailyReportConversation::begin($bot);
+        ConversationStarter::beginFresh($bot, DailyReportConversation::class);
     }
 
-    /**
-     * Tổng kết tuần (Gửi vào thứ 6).
-     */
-    public function weeklyReport(Nutgram $bot)
+    public function weeklyReport(Nutgram $bot): void
     {
-        if ($bot->isCallbackQuery()) {
-            $bot->answerCallbackQuery();
+        TelegramResponse::answerCallback($bot);
+
+        if (!$this->requireTeamMember($bot)) {
+            return;
         }
 
-        $bot->sendMessage("Bắt đầu báo cáo tuần! Hãy nhập KPI tuần của bạn:");
+        ConversationStarter::beginFresh($bot, WeeklyReportConversation::class);
     }
 
-    /**
-     * Tổng kết tháng.
-     */
-    public function monthlyReport(Nutgram $bot)
+    public function monthlyReport(Nutgram $bot): void
     {
-        if ($bot->isCallbackQuery()) {
-            $bot->answerCallbackQuery();
+        TelegramResponse::answerCallback($bot);
+
+        if (!$this->requireTeamMember($bot)) {
+            return;
         }
 
-        $bot->sendMessage("Bắt đầu báo cáo tháng! Hãy nhập KPI tháng của bạn:");
+        ConversationStarter::beginFresh($bot, MonthlyReportConversation::class);
     }
 
-    /**
-     * Thông tin cá nhân.
-     */
-    public function info(Nutgram $bot)
+    public function viewReports(Nutgram $bot): void
     {
-        if ($bot->isCallbackQuery()) {
-            $bot->answerCallbackQuery();
+        TelegramResponse::answerCallback($bot);
+
+        if (!$this->requireRegisteredUser($bot)) {
+            return;
         }
 
-        $user = $bot->user();
-        $telegramUser = TelegramUser::where('telegram_id', $user->id)->first();
+        ConversationStarter::beginFresh($bot, ViewReportsConversation::class);
+    }
 
+    public function info(Nutgram $bot): void
+    {
+        TelegramResponse::answerCallback($bot);
+
+        $telegramUser = $this->requireRegisteredUser($bot);
         if (!$telegramUser) {
-            $bot->sendMessage("Bạn chưa đăng ký. Hãy gửi /start để bắt đầu.");
             return;
         }
 
-        $teamName = $telegramUser->team ? $telegramUser->team->name : 'Chưa chọn team';
+        $teamName = $telegramUser->team
+            ? $telegramUser->team->name
+            : 'Chưa chọn team — gõ /dangky để đăng ký';
+
+        $username = $telegramUser->username ? "@{$telegramUser->username}" : '—';
+
         $msg = "👤 Thông tin của bạn:\n";
         $msg .= "Họ tên: {$telegramUser->first_name} {$telegramUser->last_name}\n";
-        $msg .= "Username: @{$telegramUser->username}\n";
+        $msg .= "Username: {$username}\n";
         $msg .= "Team: {$teamName}\n";
-        $msg .= "Điểm: {$telegramUser->points}\n";
+        $msg .= "💰 Điểm: {$telegramUser->points}\n";
+        $msg .= "🔥 Streak: {$telegramUser->streak_count} ngày\n";
 
         $bot->sendMessage(text: $msg);
     }
 
-    /**
-     * Bảng xếp hạng (/leaderboard).
-     */
-    public function leaderboard(Nutgram $bot)
+    public function leaderboard(Nutgram $bot): void
     {
-        // Lấy top user theo điểm
-        $topUsers = TelegramUser::orderBy('points', 'desc')->take(5)->get();
-        
-        $msg = "🏆 **Bảng Xếp Hạng** 🏆\n";
-        foreach ($topUsers as $index => $u) {
-            $msg .= ($index + 1) . ". {$u->first_name} - {$u->points} điểm\n";
+        TelegramResponse::answerCallback($bot);
+
+        $topUsers = TelegramUser::orderBy('points', 'desc')->take(10)->get();
+
+        if ($topUsers->isEmpty()) {
+            $bot->sendMessage('🏆 Chưa có ai trong bảng xếp hạng. Hãy là người đầu tiên báo cáo!');
+            return;
         }
-        
-        $bot->sendMessage(text: $msg, parse_mode: 'Markdown');
+
+        $msg = "🏆 BẢNG XẾP HẠNG\n\n";
+        foreach ($topUsers as $index => $u) {
+            $medal = match ($index) {
+                0 => '🥇',
+                1 => '🥈',
+                2 => '🥉',
+                default => ($index + 1) . '.',
+            };
+            $msg .= "{$medal} {$u->first_name}";
+            if ($u->username) {
+                $msg .= " (@{$u->username})";
+            }
+            $msg .= "\n└ 💰 {$u->points} điểm | 🔥 {$u->streak_count} ngày streak\n\n";
+        }
+
+        $bot->sendMessage(text: $msg);
+    }
+
+    protected function requireRegisteredUser(Nutgram $bot): ?TelegramUser
+    {
+        $telegramUser = TelegramUser::where('telegram_id', $bot->user()->id)->first();
+
+        if (!$telegramUser) {
+            $bot->sendMessage('Bạn chưa đăng ký. Hãy gửi /start để bắt đầu.');
+            return null;
+        }
+
+        return $telegramUser;
+    }
+
+    protected function requireTeamMember(Nutgram $bot): bool
+    {
+        $telegramUser = $this->requireRegisteredUser($bot);
+
+        if (!$telegramUser) {
+            return false;
+        }
+
+        if (!$telegramUser->team_id) {
+            $bot->sendMessage(
+                "⚠️ Bạn chưa tham gia team nào!\n\nHãy dùng nút Đăng ký team trong menu hoặc gõ /dangky trước khi báo cáo.",
+            );
+            return false;
+        }
+
+        return true;
     }
 }

@@ -2,123 +2,219 @@
 
 namespace App\Telegram\Conversations;
 
-use SergiX44\Nutgram\Conversations\Conversation;
-use SergiX44\Nutgram\Nutgram;
-use SergiX44\Nutgram\Telegram\Types\Keyboard\ForceReply;
-use App\Telegram\Views\MessageTemplates;
 use App\Models\TelegramUser;
 use App\Models\Report;
+use App\Telegram\Concerns\CachesTelegramUser;
+use App\Telegram\Concerns\ExitsToHomeMenu;
+use App\Telegram\Concerns\PromptsForceReply;
+use App\Telegram\TelegramResponse;
+use App\Telegram\Views\MessageTemplates;
 use Carbon\Carbon;
+use SergiX44\Nutgram\Conversations\Conversation;
+use SergiX44\Nutgram\Nutgram;
 
 class DailyReportConversation extends Conversation
 {
+    use CachesTelegramUser;
+    use ExitsToHomeMenu;
+    use PromptsForceReply;
+
     protected $tasks_done;
     protected $stuck_task;
-    protected $support_needed;
+    protected $support_needed = 'support_none';
+    protected $support_person = null;
     protected $mood;
     protected $feeling;
     protected $kpi_answers = [];
 
-    /**
-     * Bắt đầu hội thoại - Dùng ForceReply để bắt buộc trả lời
-     */
-    public function start(Nutgram $bot)
+    public function start(Nutgram $bot): void
     {
-        $bot->sendMessage(
-            text: MessageTemplates::dailyReportPrompt(),
-            reply_markup: ForceReply::make(true, null, true),
-            parse_mode: 'Markdown'
+        $this->setSkipHandlers(true);
+
+        $this->sendForceReplyPrompt(
+            $bot,
+            MessageTemplates::dailyReportPrompt(),
+            '3 việc đã làm (mỗi dòng một việc)',
         );
         $this->next('askTasksDone');
     }
 
-    /**
-     * Bước 1: Thu thập 3 việc đã làm
-     */
-    public function askTasksDone(Nutgram $bot)
+    public function askTasksDone(Nutgram $bot): void
     {
-        $this->tasks_done = $bot->message()->text;
-        
-        $bot->sendMessage(
-            text: "Đã ghi nhận công việc. \n\n**Bước 2:** Có việc gì đang vướng không bạn? (Nhập text hoặc bấm /skip nếu không có)",
-            reply_markup: ForceReply::make(true, null, true),
-            parse_mode: 'Markdown'
+        if ($this->shouldExitToHome($bot)) {
+            $this->exitToHome($bot);
+            return;
+        }
+
+        $text = $this->acceptForceReplyText(
+            $bot,
+            MessageTemplates::dailyReportPrompt(),
+        );
+        if ($text === null) {
+            return;
+        }
+
+        $this->tasks_done = $text;
+
+        $this->sendForceReplyPrompt(
+            $bot,
+            "Bước 2: Có việc gì đang vướng?\n(Nhập text hoặc /skip — nhớ bấm «Trả lời»)",
+            'Việc vướng hoặc /skip',
         );
         $this->next('askStuckTask');
     }
 
-    /**
-     * Bước 2: Thu thập việc vướng mắc
-     */
-    public function askStuckTask(Nutgram $bot)
+    public function askStuckTask(Nutgram $bot): void
     {
-        $text = $bot->message()->text;
+        if ($this->shouldExitToHome($bot)) {
+            $this->exitToHome($bot);
+            return;
+        }
+
+        $text = $this->acceptForceReplyText(
+            $bot,
+            "Bước 2: Có việc gì đang vướng?\n(Nhập text hoặc /skip — nhớ bấm «Trả lời»)",
+        );
+        if ($text === null) {
+            return;
+        }
+
         $this->stuck_task = $text === '/skip' ? null : $text;
 
+        $user = $this->telegramUser($bot, true);
+        $team = $user?->team;
+        $leader = null;
+        $peers = [];
+
+        if ($user && $team) {
+            $leader = $team->leader && $team->leader->id !== $user->id ? $team->leader : null;
+
+            $peers = $team->users
+                ->filter(fn (TelegramUser $member) => $member->id !== $user->id && ($leader === null || $member->id !== $leader->id))
+                ->sortBy(fn (TelegramUser $member) => mb_strtolower($member->displayName()))
+                ->values()
+                ->all();
+        }
+
         $bot->sendMessage(
-            text: "**Bước 3:** Bạn cần ai hỗ trợ không? Hãy chọn từ danh sách dưới đây:",
-            reply_markup: MessageTemplates::supportKeyboard()
+            text: "Bước 3: Bạn cần ai hỗ trợ?\nBấm vào tên để mở Telegram của đồng đội, rồi bấm «Xong» để tiếp tục.",
+            reply_markup: MessageTemplates::supportKeyboard($leader, $peers),
         );
         $this->next('askSupport');
     }
 
-    /**
-     * Bước 3: Thu thập người hỗ trợ (từ inline keyboard)
-     */
-    public function askSupport(Nutgram $bot)
+    public function askSupport(Nutgram $bot): void
     {
         if (!$bot->isCallbackQuery()) {
-            $bot->sendMessage("Vui lòng chọn từ menu dưới đây:");
+            if ($this->shouldExitToHome($bot)) {
+                $this->exitToHome($bot);
+                return;
+            }
+            $bot->sendMessage('Vui lòng chọn nút bên dưới. Gõ /start để về menu.');
             return;
         }
 
-        $this->support_needed = $bot->callbackQuery()->data;
-        $bot->answerCallbackQuery();
+        TelegramResponse::answerCallback($bot);
+
+        $supportData = $bot->callbackQuery()->data;
+        $this->support_needed = $supportData;
+        $this->support_person = null;
+
+        if (str_starts_with($supportData, 'support_user_')) {
+            $selectedId = (int) str_replace('support_user_', '', $supportData);
+            $currentUser = $this->telegramUser($bot, true);
+            $team = $currentUser?->team;
+
+            $selectedUser = $team?->users->firstWhere('id', $selectedId);
+            if (!$selectedUser && $team?->leader?->id === $selectedId) {
+                $selectedUser = $team->leader;
+            }
+
+            if (!$selectedUser) {
+                $bot->sendMessage('Người hỗ trợ không hợp lệ hoặc không còn trong team. Vui lòng chọn lại.');
+                $leader = $team?->leader && $team->leader->id !== $currentUser?->id ? $team->leader : null;
+                $peers = $team
+                    ? $team->users
+                        ->filter(fn (TelegramUser $member) => $member->id !== $currentUser?->id && ($leader === null || $member->id !== $leader->id))
+                        ->sortBy(fn (TelegramUser $member) => mb_strtolower($member->displayName()))
+                        ->values()
+                        ->all()
+                    : [];
+
+                $bot->sendMessage(
+                    text: "Bước 3: Bạn cần ai hỗ trợ?\nBấm vào tên để mở Telegram của đồng đội, rồi bấm «Xong» để tiếp tục.",
+                    reply_markup: MessageTemplates::supportKeyboard($leader, $peers),
+                );
+                return;
+            }
+
+            $this->support_needed = $team?->leader?->id === $selectedUser->id ? 'support_lead' : 'support_peer';
+            $this->support_person = [
+                'id' => $selectedUser->id,
+                'telegram_id' => $selectedUser->telegram_id,
+                'name' => $selectedUser->displayName(),
+                'username' => $selectedUser->username,
+                'role' => $this->support_needed === 'support_lead' ? 'lead' : 'peer',
+            ];
+        }
 
         $bot->sendMessage(
-            text: "**Bước 4:** Tâm trạng & năng lượng hôm nay của bạn thế nào?",
-            reply_markup: MessageTemplates::moodKeyboard()
+            text: 'Bước 4: Tâm trạng hôm nay?',
+            reply_markup: MessageTemplates::moodKeyboard(),
         );
         $this->next('askMood');
     }
 
-    /**
-     * Bước 4: Thu thập tâm trạng (từ inline keyboard)
-     */
-    public function askMood(Nutgram $bot)
+    public function askMood(Nutgram $bot): void
     {
         if (!$bot->isCallbackQuery()) {
-            $bot->sendMessage("Vui lòng chọn số sao:");
+            if ($this->shouldExitToHome($bot)) {
+                $this->exitToHome($bot);
+                return;
+            }
+            $bot->sendMessage('Vui lòng chọn số sao. Gõ /start để về menu.');
             return;
         }
 
-        $this->mood = str_replace('mood_', '', $bot->callbackQuery()->data);
-        $bot->answerCallbackQuery();
+        TelegramResponse::answerCallback($bot);
 
-        $bot->sendMessage(
-            text: "**Bước 5:** Viết một dòng cảm xúc tự do (dưới 100 ký tự):",
-            reply_markup: ForceReply::make(true, null, true)
+        $this->mood = str_replace('mood_', '', $bot->callbackQuery()->data);
+
+        $this->sendForceReplyPrompt(
+            $bot,
+            "Bước 5: Một dòng cảm xúc (dưới 100 ký tự).\nBấm «Trả lời» trên tin nhắn này.",
+            'Cảm xúc hôm nay…',
         );
         $this->next('askFeeling');
     }
 
-    /**
-     * Bước 5: Thu thập cảm xúc
-     */
-    public function askFeeling(Nutgram $bot)
+    public function askFeeling(Nutgram $bot): void
     {
-        $this->feeling = $bot->message()->text;
+        if ($this->shouldExitToHome($bot)) {
+            $this->exitToHome($bot);
+            return;
+        }
 
-        $user = TelegramUser::where('telegram_id', $bot->user()->id)->first();
-        $team = $user->team;
+        $text = $this->acceptForceReplyText(
+            $bot,
+            "Bước 5: Một dòng cảm xúc (dưới 100 ký tự).\nBấm «Trả lời» trên tin nhắn này.",
+        );
+        if ($text === null) {
+            return;
+        }
+
+        $this->feeling = $text;
+
+        $user = $this->telegramUser($bot, true);
+        $team = $user?->team;
 
         if ($team && $team->kpis->count() > 0) {
             $firstKpi = $team->kpis->first();
-            $bot->sendMessage(
-                text: MessageTemplates::kpiPrompt($firstKpi->name, $firstKpi->question_text),
-                reply_markup: ForceReply::make(true, null, true)
+            $this->sendForceReplyPrompt(
+                $bot,
+                MessageTemplates::kpiPrompt($firstKpi->name, $firstKpi->question_text),
+                'Nhập KPI…',
             );
-            
             $bot->setUserData('current_kpi_index', 0);
             $this->next('askKpis');
         } else {
@@ -126,27 +222,42 @@ class DailyReportConversation extends Conversation
         }
     }
 
-    /**
-     * Bước 6: Thu thập KPI động theo team
-     */
-    public function askKpis(Nutgram $bot)
+    public function askKpis(Nutgram $bot): void
     {
-        $user = TelegramUser::where('telegram_id', $bot->user()->id)->first();
-        $team = $user->team;
-        $currentIndex = $bot->getUserData('current_kpi_index', null, 0);
-        
+        if ($this->shouldExitToHome($bot)) {
+            $this->exitToHome($bot);
+            return;
+        }
+
+        $user = $this->telegramUser($bot, true);
+        $team = $user?->team;
+        if (!$team || $team->kpis->isEmpty()) {
+            $this->finishReport($bot);
+            return;
+        }
+
+        $currentIndex = (int) $bot->getUserData('current_kpi_index', null, 0);
         $kpis = $team->kpis;
         $currentKpi = $kpis[$currentIndex];
-        
-        $this->kpi_answers[$currentKpi->name] = $bot->message()->text;
-        
+
+        $text = $this->acceptForceReplyText(
+            $bot,
+            MessageTemplates::kpiPrompt($currentKpi->name, $currentKpi->question_text),
+        );
+        if ($text === null) {
+            return;
+        }
+
+        $this->kpi_answers[$currentKpi->name] = $text;
+
         $nextIndex = $currentIndex + 1;
-        
+
         if ($nextIndex < $kpis->count()) {
             $nextKpi = $kpis[$nextIndex];
-            $bot->sendMessage(
-                text: MessageTemplates::kpiPrompt($nextKpi->name, $nextKpi->question_text),
-                reply_markup: ForceReply::make(true, null, true)
+            $this->sendForceReplyPrompt(
+                $bot,
+                MessageTemplates::kpiPrompt($nextKpi->name, $nextKpi->question_text),
+                'Nhập KPI…',
             );
             $bot->setUserData('current_kpi_index', $nextIndex);
             $this->next('askKpis');
@@ -155,21 +266,15 @@ class DailyReportConversation extends Conversation
         }
     }
 
-    /**
-     * Kết thúc báo cáo và lưu DB
-     */
-    protected function finishReport(Nutgram $bot)
+    protected function finishReport(Nutgram $bot): void
     {
-        $user = TelegramUser::where('telegram_id', $bot->user()->id)->first();
-        
-        $data = [
-            'tasks_done' => $this->tasks_done,
-            'stuck_task' => $this->stuck_task,
-            'support_needed' => $this->support_needed,
-            'mood' => $this->mood,
-            'feeling' => $this->feeling,
-            'kpis' => $this->kpi_answers
-        ];
+        $user = $this->telegramUser($bot);
+
+        if (!$user) {
+            $bot->sendMessage('❌ Không tìm thấy tài khoản. Gõ /start.');
+            $this->end();
+            return;
+        }
 
         Report::updateOrCreate(
             [
@@ -178,13 +283,21 @@ class DailyReportConversation extends Conversation
                 'date' => Carbon::today(),
             ],
             [
-                'data' => $data,
+                'data' => [
+                    'tasks_done' => $this->tasks_done,
+                    'stuck_task' => $this->stuck_task,
+                    'support_needed' => $this->support_needed,
+                    'support_person' => $this->support_person,
+                    'mood' => $this->mood,
+                    'feeling' => $this->feeling,
+                    'kpis' => $this->kpi_answers,
+                ],
                 'points_earned' => 10,
                 'status' => 'submitted',
             ]
         );
 
-        $bot->sendMessage("🎉 Cảm ơn bạn đã hoàn thành báo cáo ngày! Bé đã ghi nhận.");
+        $bot->sendMessage('🎉 Cảm ơn bạn đã hoàn thành báo cáo ngày! Bé đã ghi nhận.');
         $this->end();
     }
 }
